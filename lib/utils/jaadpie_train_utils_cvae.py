@@ -8,8 +8,9 @@ from tqdm import tqdm
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
-from torch.utils import data
+from torch.utils import dataimport cv2, os
 
+from lib.utils.data_utils import bbox_denormalize, cxcywh_to_x1y1x2y2
 from lib.utils.eval_utils import eval_jaad_pie, eval_jaad_pie_cvae
 from lib.losses import cvae, cvae_multi
 
@@ -106,6 +107,55 @@ def test(model, test_gen, criterion, device):
             input_traj_np = input_traj.to('cpu').numpy()
             target_traj_np = target_traj.to('cpu').numpy()
             cvae_dec_traj = cvae_dec_traj.to('cpu').numpy()
+
+                        # Visualization output directory
+            viz_dir = './viz_last_frame'
+            os.makedirs(viz_dir, exist_ok=True)
+
+            # Image resolution used for denormalization (matches configs/jaad/jaad.py)
+            W, H = 1920, 1080
+
+            # Draw/save per-sample
+            cur_imgs = data.get('cur_image_file', [None] * batch_size)  # list of image paths
+            for i in range(batch_size):
+                # Reconstruct absolute normalized boxes
+                last = input_traj_np[i, -1]                       # (4,)
+                obs_abs_norm = input_traj_np[i]                   # (Tobs, 4)
+                gt_abs_norm = last[None, :] + target_traj_np[i, -1]      # (Tpred, 4)
+                k = 0  # choose a CVAE mode to visualize
+                pred_abs_norm = last[None, :] + cvae_dec_traj[i, -1, k]  # (Tpred, 4)
+
+                # Denormalize to pixel coords
+                obs_px = bbox_denormalize(obs_abs_norm, W=W, H=H)
+                gt_px = bbox_denormalize(gt_abs_norm,   W=W, H=H)
+                pred_px = bbox_denormalize(pred_abs_norm, W=W, H=H)
+
+                # Convert to x1y1x2y2 for drawing
+                obs_xyxy  = cxcywh_to_x1y1x2y2(obs_px).astype(int)
+                gt_xyxy   = cxcywh_to_x1y1x2y2(gt_px).astype(int)
+                pred_xyxy = cxcywh_to_x1y1x2y2(pred_px).astype(int)
+
+                # Load last observed frame image; fallback to a white canvas
+                img_path = cur_imgs[i] if isinstance(cur_imgs, list) else cur_imgs
+                if img_path and os.path.exists(img_path):
+                    img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+                else:
+                    img = (np.ones((H, W, 3), dtype=np.uint8) * 255)
+
+                # Draw observed (green), GT future (red), prediction (blue)
+                for (x1,y1,x2,y2) in obs_xyxy:
+                    cv2.rectangle(img, (x1,y1), (x2,y2), (0,255,0), 2)
+                for (x1,y1,x2,y2) in gt_xyxy:
+                    cv2.rectangle(img, (x1,y1), (x2,y2), (255,0,0), 2)
+                for (x1,y1,x2,y2) in pred_xyxy:
+                    cv2.rectangle(img, (x1,y1), (x2,y2), (0,0,255), 2)
+
+                # Save arrays and overlay
+                np.savez(os.path.join(viz_dir, f'b{batch_idx}_i{i}.npz'),
+                        observed=obs_px, gt=gt_px, pred=pred_px, image_path=img_path)
+                cv2.imwrite(os.path.join(viz_dir, f'overlay_b{batch_idx}_i{i}.png'),
+                            cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+
             batch_MSE_15, batch_MSE_05, batch_MSE_10, batch_FMSE, batch_CMSE, batch_CFMSE, batch_FIOU =\
                 eval_jaad_pie_cvae(input_traj_np, target_traj_np[:,-1,:,:], cvae_dec_traj[:,-1,:,:,:])
             MSE_15 += batch_MSE_15
