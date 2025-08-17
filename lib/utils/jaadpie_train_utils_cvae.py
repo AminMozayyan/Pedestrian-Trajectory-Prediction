@@ -8,7 +8,8 @@ from tqdm import tqdm
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
-from torch.utils import dataimport cv2, os
+from torch.utils import data
+import cv2, os
 
 from lib.utils.data_utils import bbox_denormalize, cxcywh_to_x1y1x2y2
 from lib.utils.eval_utils import eval_jaad_pie, eval_jaad_pie_cvae
@@ -74,7 +75,7 @@ def val(model, val_gen, criterion, device):
          + total_cvae_loss/len(val_gen.dataset) + total_KLD_loss/len(val_gen.dataset)
     return val_loss
 
-def test(model, test_gen, criterion, device):
+def test(model, test_gen, criterion, device, original_videos_dir=None):
     total_goal_loss = 0
     total_cvae_loss = 0
     total_KLD_loss = 0
@@ -87,6 +88,10 @@ def test(model, test_gen, criterion, device):
     CFMSE = 0
     model.eval()
     loader = tqdm(test_gen, total=len(test_gen))
+    
+    # Dictionary to cache video captures to avoid reopening videos
+    video_cache = {}
+    
     with torch.set_grad_enabled(False):
         for batch_idx, data in enumerate(loader):
             batch_size = data['input_x'].shape[0]
@@ -95,7 +100,6 @@ def test(model, test_gen, criterion, device):
 
             all_goal_traj, cvae_dec_traj, KLD_loss, _ = model(inputs=input_traj, map_mask=None, targets=None, training=False)
             cvae_loss = cvae_multi(cvae_dec_traj,target_traj)
-
 
             goal_loss = criterion(all_goal_traj, target_traj)
 
@@ -108,7 +112,7 @@ def test(model, test_gen, criterion, device):
             target_traj_np = target_traj.to('cpu').numpy()
             cvae_dec_traj = cvae_dec_traj.to('cpu').numpy()
 
-                        # Visualization output directory
+            # Visualization output directory
             viz_dir = './viz_last_frame'
             os.makedirs(viz_dir, exist_ok=True)
 
@@ -135,12 +139,50 @@ def test(model, test_gen, criterion, device):
                 gt_xyxy   = cxcywh_to_x1y1x2y2(gt_px).astype(int)
                 pred_xyxy = cxcywh_to_x1y1x2y2(pred_px).astype(int)
 
-                # Load last observed frame image; fallback to a white canvas
-                img_path = cur_imgs[i] if isinstance(cur_imgs, list) else cur_imgs
-                if img_path and os.path.exists(img_path):
-                    img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
-                else:
-                    img = (np.ones((H, W, 3), dtype=np.uint8) * 255)
+                # Try to load frame from video clip
+                img = None
+                if original_videos_dir:
+                    # Extract video ID and frame number from the current image path
+                    img_path = cur_imgs[i] if isinstance(cur_imgs, list) else cur_imgs
+                    if img_path:
+                        # Parse the path to get video ID and frame number
+                        # Expected format: /path/to/images/video_id/frame_number.png
+                        path_parts = img_path.replace('\\', '/').split('/')
+                        if len(path_parts) >= 2:
+                            video_id = path_parts[-2]  # video_id folder
+                            frame_filename = path_parts[-1]  # frame_number.png
+                            frame_number = int(frame_filename.split('.')[0])  # frame_number
+                            
+                            # Construct path to video clip
+                            video_path = os.path.join(original_videos_dir, f"{video_id}.mp4")
+                            
+                            if os.path.exists(video_path):
+                                # Check if video is already in cache
+                                if video_id not in video_cache:
+                                    video_cache[video_id] = cv2.VideoCapture(video_path)
+                                    print(f"Opened video: {video_path}")
+                                
+                                # Extract the specific frame
+                                cap = video_cache[video_id]
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                                ret, frame = cap.read()
+                                
+                                if ret:
+                                    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                    print(f"Extracted frame {frame_number} from video: {video_path}")
+                                else:
+                                    print(f"Failed to extract frame {frame_number} from video: {video_path}")
+                            else:
+                                print(f"Video not found: {video_path}")
+                
+                # Fallback to loading from current image path if video not found
+                if img is None:
+                    img_path = cur_imgs[i] if isinstance(cur_imgs, list) else cur_imgs
+                    if img_path and os.path.exists(img_path):
+                        img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+                    else:
+                        # Create white canvas as last resort
+                        img = (np.ones((H, W, 3), dtype=np.uint8) * 255)
 
                 # Draw observed (green), GT future (red), prediction (blue)
                 for (x1,y1,x2,y2) in obs_xyxy:
@@ -167,6 +209,10 @@ def test(model, test_gen, criterion, device):
             FIOU += batch_FIOU
             
 
+    
+    # Clean up video captures
+    for cap in video_cache.values():
+        cap.release()
     
     MSE_15 /= len(test_gen.dataset)
     MSE_05 /= len(test_gen.dataset)

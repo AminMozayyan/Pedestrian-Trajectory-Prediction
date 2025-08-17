@@ -24,6 +24,8 @@ def parse_sgnet_args():
     parser.add_argument('--LATENT_DIM', default=32, type=int)
     parser.add_argument('--pred_dim', default=4, type=int)
     parser.add_argument('--input_dim', default=4, type=int)
+    parser.add_argument('--original_videos_dir', default=None, type=str, 
+                       help='Path to directory containing original video clips (.mp4 files) for visualization')
     
     
 
