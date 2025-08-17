@@ -9,7 +9,7 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils import data
-import cv2, os
+import cv2
 
 from lib.utils.data_utils import bbox_denormalize, cxcywh_to_x1y1x2y2
 from lib.utils.eval_utils import eval_jaad_pie, eval_jaad_pie_cvae
