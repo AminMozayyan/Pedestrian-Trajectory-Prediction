@@ -41,6 +41,7 @@ import cv2
 
 import numpy as np
 import xml.etree.ElementTree as ET
+import os
 
 from os.path import join, abspath, exists
 from os import listdir, makedirs
