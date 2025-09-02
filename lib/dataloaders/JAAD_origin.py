@@ -79,7 +79,7 @@ class JAAD(object):
         Generate a path to save cache files
         :return: Cache file folder path
         """
-        cache_path = abspath(join(self._jaad_path, 'data_cache'))
+        cache_path = '/kaggle/working/data_cache'
         if not exists(cache_path):
             makedirs(cache_path)
         return cache_path
