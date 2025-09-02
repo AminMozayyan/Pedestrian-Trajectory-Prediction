@@ -74,14 +74,10 @@ class JAAD(object):
 
     # Path generators
     @property
-    def cache_path(self):
-        """
-        Generate a path to save cache files
-        :return: Cache file folder path
-        """
+    def cache_path(self): 
         cache_path = '/kaggle/working/data_cache'
-        if not exists(cache_path):
-            makedirs(cache_path)
+        if not os.path.exists(cache_path):
+            os.makedirs(cache_path, exist_ok=True)
         return cache_path
 
     def _get_default_path(self):
