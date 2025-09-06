@@ -75,7 +75,7 @@ def val(model, val_gen, criterion, device):
          + total_cvae_loss/len(val_gen.dataset) + total_KLD_loss/len(val_gen.dataset)
     return val_loss
 
-def test(model, test_gen, criterion, device, original_videos_dir=None):
+def test(model, test_gen, criterion, device, original_videos_dir=None, dataset_fps=30, video_fps=None):
     total_goal_loss = 0
     total_cvae_loss = 0
     total_KLD_loss = 0
@@ -151,7 +151,7 @@ def test(model, test_gen, criterion, device, original_videos_dir=None):
                         if len(path_parts) >= 2:
                             video_id = path_parts[-2]  # video_id folder
                             frame_filename = path_parts[-1]  # frame_number.png
-                            frame_number = int(frame_filename.split('.')[0])  # frame_number
+                            dataset_frame_number = int(frame_filename.split('.')[0])  # frame_number
                             
                             # Construct path to video clip
                             video_path = os.path.join(original_videos_dir, f"{video_id}.mp4")
@@ -159,19 +159,44 @@ def test(model, test_gen, criterion, device, original_videos_dir=None):
                             if os.path.exists(video_path):
                                 # Check if video is already in cache
                                 if video_id not in video_cache:
-                                    video_cache[video_id] = cv2.VideoCapture(video_path)
+                                    cap = cv2.VideoCapture(video_path)
+                                    video_cache[video_id] = {
+                                        'cap': cap,
+                                        'fps': cap.get(cv2.CAP_PROP_FPS),
+                                        'frame_count': int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                                    }
                                     print(f"Opened video: {video_path}")
+                                    print(f"Video FPS: {video_cache[video_id]['fps']:.2f}, Frame count: {video_cache[video_id]['frame_count']}")
+                                
+                                # Get video properties
+                                video_info = video_cache[video_id]
+                                actual_video_fps = video_info['fps']
+                                
+                                # Convert frame number based on frame rate difference
+                                if video_fps is not None:
+                                    # Use provided video FPS
+                                    fps_ratio = video_fps / dataset_fps
+                                else:
+                                    # Use actual video FPS
+                                    fps_ratio = actual_video_fps / dataset_fps
+                                
+                                # Convert dataset frame number to video frame number
+                                video_frame_number = int(dataset_frame_number * fps_ratio)
+                                
+                                # Ensure frame number is within video bounds
+                                video_frame_number = min(video_frame_number, video_info['frame_count'] - 1)
+                                video_frame_number = max(0, video_frame_number)
                                 
                                 # Extract the specific frame
-                                cap = video_cache[video_id]
-                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                                cap = video_info['cap']
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, video_frame_number)
                                 ret, frame = cap.read()
                                 
                                 if ret:
                                     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                    print(f"Extracted frame {frame_number} from video: {video_path}")
+                                    print(f"Dataset frame {dataset_frame_number} -> Video frame {video_frame_number} (FPS ratio: {fps_ratio:.3f})")
                                 else:
-                                    print(f"Failed to extract frame {frame_number} from video: {video_path}")
+                                    print(f"Failed to extract video frame {video_frame_number} from video: {video_path}")
                             else:
                                 print(f"Video not found: {video_path}")
                 
@@ -211,8 +236,8 @@ def test(model, test_gen, criterion, device, original_videos_dir=None):
 
     
     # Clean up video captures
-    for cap in video_cache.values():
-        cap.release()
+    for video_info in video_cache.values():
+        video_info['cap'].release()
     
     MSE_15 /= len(test_gen.dataset)
     MSE_05 /= len(test_gen.dataset)
