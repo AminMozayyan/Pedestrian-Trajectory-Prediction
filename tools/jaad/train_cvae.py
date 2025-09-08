@@ -109,7 +109,7 @@ def main(args):
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, patience=5,
-                                                            min_lr=1e-10, verbose=1)
+                                                            min_lr=1e-10)
     if osp.isfile(args.checkpoint):
         checkpoint = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
